@@ -1,34 +1,22 @@
 <!DOCTYPE html>
-<title>Mike's News</title>
+<head>
+<title>alex's yesterday news</title>
 <meta name="viewport" content="width=device-width">
 <link rel="apple-touch-icon" href="news_icon.png">
 <style type="text/css">
 body {
 max-width : 35em;
-font-family : verdana, arial, sans-serif;
-background : #ddd;
-color : #111;
+font-family : "helvetica neue", helvetica, arial, sans-serif;
+background : #fdf6e3;
+color : #4a525a;
 margin : auto;
-}
-.tweet_metadata {
-font-size : 0.8em;
-color : #bbb;
-padding : 0.2em;
 }
 a {
 text-decoration : none;
 color : #11a;
 }
-@media screen and (min-width:35em) {
 header {
-border-top-left-radius : 0.5em;
-border-top-right-radius : 0.5em;
-margin-top : 0.5em;
-}
-}
-header {
-background : #333;
-color : #eee;
+background : #4a525a;
 padding : 0.7em 1em;
 }
 header p {
@@ -41,6 +29,8 @@ header a {
 color : #adf;
 }
 h1 {
+background : #4a525a;
+color : rgb(221, 221, 221);
 font-size : 1.2em;
 letter-spacing : 0.1em;
 font-weight : 400;
@@ -63,10 +53,69 @@ border-bottom : 1px solid #ccc;
 line-height : 1.5em;
 padding : 0.5em;
 }
+footer {
+text-align:center;
+margin: 2em auto 0;
+font-size: 0.8em;
+font-weight: 300;
+}
+.tweet_metadata {
+font-size : 0.8em;
+color : #657b83;
+padding : 1em 0 0;
+}
+.tweet_metadata a {
+color: #657b83;
+}
+.tweet_metadata a:hover {
+border-bottom: 1px dotted #657b83;
+}
+.tweet {
+font-family: whitney, "proxima nova", "helvetica neue", helvetica, sans;
+font-weight: 300;
+}
+.tweet h2 {
+font-family: sentinel,adelle, georgia, serif;
+font-size: 1.1em;
+font-weight:bold;
+background:none;
+padding:0.5 0 1em;
+}
+.tweet h2 a {
+border-bottom: 1px solid #ffefd5;
+box-shadow: inset 0 -4px 0 #ffefd5;
+color: #4a525a;
+text-decoration: none;
+}
+@media screen and (min-width:35em) {
+header {
+border-top-left-radius : 0.5em;
+border-top-right-radius : 0.5em;
+margin-top : 0.5em;
+}
+}
 </style>
+</head>
+<body>
 <header>
 <h1>Yesterday's News</h1>
-<p>Parsed from Twitter with love by <a href="http://mikeshea.net/tweet_threshold.html">Tweet Threshold</a>.</p>
 </header>
-{% for tweet in yesterdays_items %}<article><div class="tweet">{{ tweet.screen_name }}: <a href="{{ tweet.url }}">{{ tweet.text }}</a></div><div class="tweet_metadata">{{ tweet.created_at_time }} Score: {{ tweet.score }} r/ts: {{tweet.retweet_count}}</div></article>
+{% for tweet in yesterdays_items %}
+<article>
+<div class="tweet">
+<h2><a href="{{ tweet.url }}">{{ tweet.title }}</a></h2>
+<blockquote>
+<cite title="{{ tweet.user_name }}">{{ tweet.screen_name }}</cite>: {{ tweet.text }}
+</blockquote>
+</div>
+<div class="tweet_metadata">
+<a href="https://twitter.com/{{ tweet.screen_name }}/status/{{tweet.id}}">{{ tweet.created_at_date.strftime("%H:%M %p - %d %b %Y") }}</a>
+| score: {{ tweet.score }} (r:{{tweet.retweet_count}}/f:{{tweet.fav_count}})
+</div>
+</article>
 {% endfor %}
+<footer>
+<p>Parsed from Twitter with love by <a href="https://github.com/al3xandru/Tweet-Threshold">Tweet Threshold</a>.</p>
+</footer>
+</body>
+</html>
