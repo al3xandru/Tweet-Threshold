@@ -1,0 +1,4 @@
+Jinja2>=2.7
+beautifulsoup4>=4.3
+requests==2.3.0
+tweepy==2.3.0

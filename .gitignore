@@ -1,0 +1,6 @@
+.python-version
+*.pyc
+TODO.taskpaper
+.idea/
+db/
+
