@@ -1,11 +1,14 @@
-import tweepy
-import sqlite3
-import json
-import re
-import time
 import datetime
 import math
+import re
+import sqlite3
+import urlparse
+
 import jinja2
+import requests
+import tweepy
+
+from bs4 import BeautifulSoup
 
 
 class Tweets (object):
@@ -14,23 +17,57 @@ class Tweets (object):
                                         account_data['consumer_secret'])
         auth.set_access_token(account_data['access_token_key'],
                               account_data['access_token_secret'])
-        api = tweepy.API(auth)
+        self.api = tweepy.API(auth)
         self.db = params['db']
         self.tweets = []
-        for tweet in api.home_timeline(count=100, include_rts=0):
+
+    def fetch(self):
+        _cont = True
+        _maxid = None
+
+        while _cont:
             try:
-                url = tweet.entities['urls'][0]['expanded_url']
-            except IndexError:
-                url = False
-            if url:
-                self.tweets.append((
-                    tweet.id_str,
-                    self.extract_urls(tweet.text),
-                    url,
-                    str(tweet.created_at).replace(' ', 'T'),
-                    tweet.retweet_count,
-                    tweet.user.screen_name,
-                    tweet.user.followers_count))
+                if _maxid:
+                    results = self.api.home_timeline(count=105, include_rts=0, max_id=_maxid)
+                else:
+                    results = self.api.home_timeline(count=105, include_rts=0)
+            except tweepy.TweepError, terr:
+                printf('ERROR', "%s", terr)
+                break
+            _count = 0
+            printf('DEBUG', "Getting home_timeline with max_id: %s", _maxid)
+
+            for tweet in results:
+                if (not _maxid) or (_maxid and _maxid > tweet.id_str):
+                    _maxid = tweet.id_str
+
+                try:
+                    url = tweet.entities['urls'][0]['expanded_url']
+                except IndexError:
+                    url = False
+                if url:
+                    try:
+                        self.tweets.append((
+                            tweet.id_str,
+                            self.extract_urls(tweet.text),
+                            url,
+                            '',
+                            str(tweet.created_at).replace(' ', 'T'),
+                            tweet.retweet_count,
+                            tweet.favorite_count,
+                            tweet.user.screen_name,
+                            tweet.user.name,
+                            tweet.user.followers_count))
+                        _count += 1
+                    except Exception, ex:
+                        printf('WARN', "Tweet https://twitter.com/%s/status/%s skipped because of %s",
+                               tweet.user.screen_name, tweet.id_str, ex)
+
+            printf('DEBUG', "Fetched: %s tweets %s containing links. New max_id: %s",
+                   len(results), _count, _maxid)
+
+            if not results:
+                _cont = False
 
     def save(self):
         tdb = TweetDatabase(self.db)
@@ -57,9 +94,12 @@ class TweetDatabase (object):
                            '(id int not null unique, '
                            'text text, '
                            'url text, '
+                           'title text, '
                            'created_at text, '
                            'retweet_count int, '
+                           'fav_count int, '
                            'screen_name text, '
+                           'user_name text, '
                            'followers_count int);')
             self.conn.commit()
             return True
@@ -77,7 +117,13 @@ class TweetDatabase (object):
     def save(self, data):
         self.create()
         self.c.executemany('INSERT OR REPLACE INTO tweets '
-                           'VALUES (?,?,?,?,?,?,?)''', data)
+                           'VALUES (?,?,?,?,?,?,?,?,?, ?);', data)
+        self.conn.commit()
+        return True
+
+    def update(self, data):
+        self.c.execute('UPDATE tweets set url=?, title=? where id=?;',
+                       data)
         self.conn.commit()
         return True
 
@@ -97,16 +143,44 @@ class FilteredTweets (object):
         self.whitelist = params['whitelist']
         self.db = TweetDatabase(params['db'])
         self.tweets = self.db.load()
+
         for tweet in self.tweets:
-            score = self.build_score(tweet['retweet_count'],
-                                     tweet['followers_count'])
             if self.check_whitelist(tweet['screen_name']):
-            	score = 0.90
-            if self.check_blacklist(tweet['text']):
+                score = 1.0
+            elif self.check_blacklist(tweet['text']):
+                score = self.build_score(tweet['retweet_count'],
+                                         tweet['fav_count'],
+                                         tweet['followers_count'])
                 tweet['score'] = score
-                self.filtered_tweets.append(tweet)
-            self.filtered_tweets = sorted(self.filtered_tweets, key=lambda
-                                          tup: tup['score'], reverse=True)
+                if tweet['score'] > 0:
+                    self.filtered_tweets.append(tweet)
+
+        self.filtered_tweets = sorted(self.filtered_tweets,
+                                      key=lambda tup: tup['score'],
+                                      reverse=True)
+        self.resolve_links()
+
+    def resolve_links(self):
+        for tweet in [t for t in self.filtered_tweets if ('title' not in t or (not t['title']))]:
+            response = requests.get(tweet['url'])
+            if response.status_code == 200:
+                tweet['url'] = response.url
+                if 'content-type' in response.headers and response.headers['content-type'].startswith('text'):
+                    tweet['title'] = self.get_title(response.text, tweet['url'])
+                else:
+                    tweet['title'] = "%s (%s)" % (urlparse.urlsplit(response.url).netloc, response.headers['content-type'].lower())
+                self.db.update((tweet['url'], tweet['title'], tweet['id']))
+                printf('DEBUG', "Retrieved title: '%s' for link: '%s'", tweet['title'], tweet['url'])
+
+    def get_title(self, html, url):
+        soup = BeautifulSoup(html)
+        title = soup.find('title')
+        if not title:
+            title = soup.find('h1')
+        if not title:
+            return urlparse.urlsplit(url).netloc
+        else:
+            return title.get_text().replace('\n', ' ')
 
     def check_blacklist(self, text):
         for phrase in self.blacklist:
@@ -120,13 +194,24 @@ class FilteredTweets (object):
                 return True
         return False
 
-    def build_score(self, retweet_count, followers_count):
+    def build_score(self, retweet_count, fav_count, followers_count):
+        if retweet_count + fav_count > 2:
+            score = ((float(retweet_count) * 10000) + (float(fav_count) * 5000)) / followers_count
+            score = round(math.log(score) / 3, 2)
+            if score > .99:
+                score = .99
+        else:
+            score = 0
+        return score
+
+    def original_build_score(self, retweet_count, followers_count):
         if retweet_count > 2:
             numerator = float(retweet_count)
             denominator = followers_count
             score = (numerator/denominator)*10000
             score = round(math.log(score)/3,2)
-            if score > .99: score = .99
+            if score > .99:
+                score = .99
         else:
             score = 0
         return score
@@ -134,10 +219,8 @@ class FilteredTweets (object):
     def load_by_date(self, close, far, params):
         self.date_filtered_tweets = []
         for tweet in self.filtered_tweets:
-            self.created_at_object = datetime.datetime.strptime(
-                tweet['created_at'], '%Y-%m-%dT%H:%M:%S')
-            if (self.build_date(close) >
-                    self.created_at_object > self.build_date(far)):
+            tweet['created_at_date'] = datetime.datetime.strptime(tweet['created_at'], '%Y-%m-%dT%H:%M:%S')
+            if (self.build_date(close) > tweet['created_at_date'] > self.build_date(far)):
                 self.date_filtered_tweets.append(tweet)
         return self.date_filtered_tweets[0:params['threshold']]
 
@@ -157,10 +240,17 @@ class WebPage (object):
             f.write(self.html_output.encode('utf-8'))
 
 
+def printf(level, msg, *args):
+    msg = "[%s] %s" % (level, msg)
+    if not args:
+        print(msg)
+    else:
+        print(msg % args)
+
 def main(accounts, params):
     for account in accounts:
         remote_tweets = Tweets(account, params)
         remote_tweets.save()
     tweets = FilteredTweets(params)
     wp = WebPage()
-    wp.build(tweets.load_by_date(0, 1, params), params)
+    wp.build(tweets.load_by_date(-1, 1, params), params)
