@@ -79,7 +79,7 @@ font-family: sentinel,adelle, georgia, serif;
 font-size: 1.1em;
 font-weight:bold;
 background:none;
-padding:0.5 0 1em;
+padding:0.5em 0 1em;
 }
 .tweet h2 a {
 border-bottom: 1px solid #ffefd5;
@@ -100,10 +100,11 @@ margin-top : 0.5em;
 <header>
 <h1>Yesterday's News</h1>
 </header>
+<!--&#x272a;-->
 {% for tweet in yesterdays_items %}
 <article>
 <div class="tweet">
-<h2><a href="{{ tweet.url }}">{{ tweet.title }}</a></h2>
+<h2 id="{{ loop.index }}"><a href="#{{ loop.index }}">&#x2720;</a> <a href="{{ tweet.url }}">{{ tweet.title }}</a></h2>
 <blockquote>
 <cite title="{{ tweet.user_name }}">{{ tweet.screen_name }}</cite>: {{ tweet.text }}
 </blockquote>
@@ -115,6 +116,7 @@ margin-top : 0.5em;
 </article>
 {% endfor %}
 <footer>
+<p>Displaying {{ count }} out of {{ total_count }} tweets with a score greater than 0.</p>
 <p>Parsed from Twitter with love by <a href="https://github.com/al3xandru/Tweet-Threshold">Tweet Threshold</a>.</p>
 </footer>
 </body>
