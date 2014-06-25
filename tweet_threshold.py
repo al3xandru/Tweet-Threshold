@@ -28,9 +28,9 @@ class Tweets (object):
         while _cont:
             try:
                 if _maxid:
-                    results = self.api.home_timeline(count=105, include_rts=0, max_id=_maxid)
+                    results = self.api.home_timeline(count=100, include_rts=0, max_id=_maxid)
                 else:
-                    results = self.api.home_timeline(count=105, include_rts=0)
+                    results = self.api.home_timeline(count=100, include_rts=0)
             except tweepy.TweepError, terr:
                 printf('ERROR', "%s", terr)
                 break
@@ -49,14 +49,14 @@ class Tweets (object):
                     try:
                         self.tweets.append((
                             tweet.id_str,
-                            self.extract_urls(tweet.text),
+                            tweet.user.screen_name,
+                            tweet.user.name,
+                            tweet.text,
                             url,
                             '',
                             str(tweet.created_at).replace(' ', 'T'),
                             tweet.retweet_count,
                             tweet.favorite_count,
-                            tweet.user.screen_name,
-                            tweet.user.name,
                             tweet.user.followers_count))
                         _count += 1
                     except Exception, ex:
@@ -66,7 +66,7 @@ class Tweets (object):
             printf('DEBUG', "Fetched: %s tweets %s containing links. New max_id: %s",
                    len(results), _count, _maxid)
 
-            if not results:
+            if len(results) < 2:
                 _cont = False
 
     def save(self):
@@ -92,14 +92,14 @@ class TweetDatabase (object):
         try:
             self.c.execute('CREATE TABLE tweets'
                            '(id int not null unique, '
+                           'screen_name text, '
+                           'user_name text, '
                            'text text, '
                            'url text, '
                            'title text, '
                            'created_at text, '
                            'retweet_count int, '
                            'fav_count int, '
-                           'screen_name text, '
-                           'user_name text, '
                            'followers_count int);')
             self.conn.commit()
             return True
@@ -161,26 +161,45 @@ class FilteredTweets (object):
         self.resolve_links()
 
     def resolve_links(self):
-        for tweet in [t for t in self.filtered_tweets if ('title' not in t or (not t['title']))]:
-            response = requests.get(tweet['url'])
-            if response.status_code == 200:
-                tweet['url'] = response.url
-                if 'content-type' in response.headers and response.headers['content-type'].startswith('text'):
-                    tweet['title'] = self.get_title(response.text, tweet['url'])
-                else:
-                    tweet['title'] = "%s (%s)" % (urlparse.urlsplit(response.url).netloc, response.headers['content-type'].lower())
-                self.db.update((tweet['url'], tweet['title'], tweet['id']))
-                printf('DEBUG', "Retrieved title: '%s' for link: '%s'", tweet['title'], tweet['url'])
+        for tweet in self.filtered_tweets:
+            if not tweet.get('title', None):
+                response = requests.get(tweet['url'])
+                if response.status_code == 200:
+                    tweet['url'] = response.url
 
-    def get_title(self, html, url):
+                    _ctype = response.headers.get('content-type', '')
+                    if _ctype.startswith('text'):
+                        tweet['title'] = self.get_title(response.text, tweet['url'], _ctype)
+                    else:
+                        tweet['title'] = "%s (%s)" % (urlparse.urlsplit(response.url).netloc,
+                                                      self.get_contenttype(_ctype))
+
+                    self.db.update((tweet['url'], tweet['title'], tweet['id']))
+                    printf('DEBUG', "Retrieved title: '%s' for link: '%s'", tweet['title'], tweet['url'])
+                else:
+                    printf('INFO', "Fetching url '%s' resulted in an error: %s", tweet['url'], response.status_code)
+            else:
+                printf('DEBUG', "Tweet w/ link '%s' already has title: '%s'", tweet['url'], tweet['title'])
+
+    def get_contenttype(self, ctype):
+        if not(ctype):
+            return ''
+        bits = ctype.split('/')
+        if len(bits) == 1:
+            return ctype.lower()
+        else:
+            return bits[1].lower()
+
+
+    def get_title(self, html, url, ctype):
         soup = BeautifulSoup(html)
         title = soup.find('title')
         if not title:
             title = soup.find('h1')
         if not title:
-            return urlparse.urlsplit(url).netloc
+            return "%s (%s)" % (urlparse.urlsplit(url).netloc, self.get_contenttype(ctype))
         else:
-            return title.get_text().replace('\n', ' ')
+            return title.get_text().replace('\n', ' ').strip()
 
     def check_blacklist(self, text):
         for phrase in self.blacklist:
@@ -222,7 +241,7 @@ class FilteredTweets (object):
             tweet['created_at_date'] = datetime.datetime.strptime(tweet['created_at'], '%Y-%m-%dT%H:%M:%S')
             if (self.build_date(close) > tweet['created_at_date'] > self.build_date(far)):
                 self.date_filtered_tweets.append(tweet)
-        return self.date_filtered_tweets[0:params['threshold']]
+        return self.date_filtered_tweets
 
     def build_date(self, day_delta):
         return (datetime.datetime.today() -
@@ -235,7 +254,9 @@ class WebPage (object):
     def build(self, yesterdays_items, params):
         with open(params['html_template']) as f:
             template = jinja2.Template(f.read())
-        self.html_output = template.render(yesterdays_items=yesterdays_items)
+        self.html_output = template.render(yesterdays_items=yesterdays_items[:params['threshold']],
+                                           count=params['threshold'],
+                                           total_count=len(yesterdays_items))
         with open(params['html_output'], 'w') as f:
             f.write(self.html_output.encode('utf-8'))
 
@@ -250,6 +271,7 @@ def printf(level, msg, *args):
 def main(accounts, params):
     for account in accounts:
         remote_tweets = Tweets(account, params)
+        remote_tweets.fetch()
         remote_tweets.save()
     tweets = FilteredTweets(params)
     wp = WebPage()
