@@ -1,6 +1,7 @@
 .python-version
 *.pyc
 TODO.taskpaper
+settings.py
 .idea/
 db/
 
