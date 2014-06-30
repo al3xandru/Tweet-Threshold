@@ -2,6 +2,7 @@ import datetime
 import math
 import re
 import sqlite3
+import sys
 import urlparse
 
 import jinja2
@@ -163,23 +164,26 @@ class FilteredTweets (object):
     def resolve_links(self):
         for tweet in self.filtered_tweets:
             if not tweet.get('title', None):
-                response = requests.get(tweet['url'])
-                if response.status_code == 200:
-                    tweet['url'] = response.url
+                try:
+                    response = requests.get(tweet['url'])
+                    if response.status_code == 200:
+                        tweet['url'] = response.url
 
-                    _ctype = response.headers.get('content-type', '')
-                    if _ctype.startswith('text'):
-                        tweet['title'] = self.get_title(response.text, tweet['url'], _ctype)
+                        _ctype = response.headers.get('content-type', '')
+                        if _ctype.startswith('text'):
+                            tweet['title'] = self.get_title(response.text, tweet['url'], _ctype)
+                        else:
+                            tweet['title'] = "%s (%s)" % (urlparse.urlsplit(response.url).netloc,
+                                                          self.get_contenttype(_ctype))
+
+                        self.db.update((tweet['url'], tweet['title'], tweet['id']))
+                        printf('DEBUG', "New title: '%s' for '%s'", tweet['title'], tweet['url'])
                     else:
-                        tweet['title'] = "%s (%s)" % (urlparse.urlsplit(response.url).netloc,
-                                                      self.get_contenttype(_ctype))
-
-                    self.db.update((tweet['url'], tweet['title'], tweet['id']))
-                    printf('DEBUG', "Retrieved title: '%s' for link: '%s'", tweet['title'], tweet['url'])
-                else:
-                    printf('INFO', "Fetching url '%s' resulted in an error: %s", tweet['url'], response.status_code)
+                        printf('INFO', "Non 200 response for '%s': %s", tweet['url'], response.status_code)
+                except Exception, exc:
+                    printf('WARN', "Error fetching '%s': %s", tweet['url'], exc)
             else:
-                printf('DEBUG', "Tweet w/ link '%s' already has title: '%s'", tweet['url'], tweet['title'])
+                printf('DEBUG', "Existing title '%s' for '%s'", tweet['title'], tweet['url'])
 
     def get_contenttype(self, ctype):
         if not(ctype):
@@ -268,11 +272,22 @@ def printf(level, msg, *args):
     else:
         print(msg % args)
 
-def main(accounts, params):
+def main(accounts, params, close=0):
     for account in accounts:
         remote_tweets = Tweets(account, params)
         remote_tweets.fetch()
         remote_tweets.save()
     tweets = FilteredTweets(params)
     wp = WebPage()
-    wp.build(tweets.load_by_date(-1, 1, params), params)
+    wp.build(tweets.load_by_date(close, 1, params), params)
+
+
+if __name__ == '__main__':
+    from settings import TWITTER_ACCOUNTS, CONFIG
+
+    close = 0
+    try:
+        close = -1 if 'today' == sys.argv[1] else 0
+    except:
+        pass
+    main(TWITTER_ACCOUNTS, CONFIG, close)
