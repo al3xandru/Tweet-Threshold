@@ -1,5 +1,7 @@
 import datetime
+import logging
 import math
+import os
 import re
 import sqlite3
 import sys
@@ -11,6 +13,10 @@ import tweepy
 
 from bs4 import BeautifulSoup
 
+logging.basicConfig(filename=os.path.expanduser('~/Library/Logs/com.mypopescu.tweetthreshold.log'),
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)5s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+logging.getLogger('requests').setLevel(logging.WARN)
 
 class Tweets (object):
     def __init__(self, account_data, params):
@@ -66,6 +72,7 @@ class Tweets (object):
 
             printf('DEBUG', "Fetched: %s tweets %s containing links. New max_id: %s",
                    len(results), _count, _maxid)
+            logging.debug("Fetched: %s tweets %s containing links.", len(results), _count)
 
             if len(results) < 2:
                 _cont = False
@@ -74,6 +81,7 @@ class Tweets (object):
         tdb = TweetDatabase(self.db)
         tdb.save(self.tweets)
         tdb.purge()
+        logging.debug("Saved: %s tweets", len(self.tweets))
 
     def extract_urls(self, text):
         text = re.sub('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|'
@@ -162,11 +170,16 @@ class FilteredTweets (object):
         self.resolve_links()
 
     def resolve_links(self):
+        _titles_new = 0
+        _titles_existing = 0
+        _titles_failed = 0
+
         for tweet in self.filtered_tweets:
             if not tweet.get('title', None):
                 try:
                     response = requests.get(tweet['url'])
                     if response.status_code == 200:
+                        _titles_new += 1
                         tweet['url'] = response.url
 
                         _ctype = response.headers.get('content-type', '')
@@ -179,11 +192,16 @@ class FilteredTweets (object):
                         self.db.update((tweet['url'], tweet['title'], tweet['id']))
                         printf('DEBUG', "New title: '%s' for '%s'", tweet['title'], tweet['url'])
                     else:
+                        _titles_failed += 1
                         printf('INFO', "Non 200 response for '%s': %s", tweet['url'], response.status_code)
                 except Exception, exc:
+                    _titles_failed += 1
                     printf('WARN', "Error fetching '%s': %s", tweet['url'], exc)
             else:
+                _titles_existing += 1
                 printf('DEBUG', "Existing title '%s' for '%s'", tweet['title'], tweet['url'])
+        logging.debug("Processed %s tweets: %s new titles, %s existing titles, %s failed",
+            len(self.filtered_tweets), _titles_new, _titles_existing, _titles_failed)
 
     def get_contenttype(self, ctype):
         if not(ctype):
@@ -243,14 +261,14 @@ class FilteredTweets (object):
         self.date_filtered_tweets = []
         for tweet in self.filtered_tweets:
             tweet['created_at_date'] = datetime.datetime.strptime(tweet['created_at'], '%Y-%m-%dT%H:%M:%S')
-            if (self.build_date(close) > tweet['created_at_date'] > self.build_date(far)):
+            if (build_date(close) > tweet['created_at_date'] > build_date(far)):
                 self.date_filtered_tweets.append(tweet)
         return self.date_filtered_tweets
 
-    def build_date(self, day_delta):
-        return (datetime.datetime.today() -
-                datetime.timedelta(days=day_delta)).replace(
-                    hour=0, minute=0, second=0, microsecond=0)
+def build_date(day_delta):
+    return (datetime.datetime.today() -
+            datetime.timedelta(days=day_delta)).replace(
+                hour=0, minute=0, second=0, microsecond=0)
 
 
 class WebPage (object):
@@ -264,6 +282,8 @@ class WebPage (object):
         with open(params['html_output'], 'w') as f:
             f.write(self.html_output.encode('utf-8'))
 
+        logging.info("Output page '%s' written", params['html_output'])
+
 
 def printf(level, msg, *args):
     msg = "[%s] %s" % (level, msg)
@@ -273,6 +293,9 @@ def printf(level, msg, *args):
         print(msg % args)
 
 def main(accounts, params, close=0):
+    logging.info("Processing %s accounts for %s", len(accounts), 
+        build_date(close+1).strftime('%a.%dth, %b.'))
+
     for account in accounts:
         remote_tweets = Tweets(account, params)
         remote_tweets.fetch()
