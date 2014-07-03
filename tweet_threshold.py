@@ -190,16 +190,16 @@ class FilteredTweets (object):
                                                           self.get_contenttype(_ctype))
 
                         self.db.update((tweet['url'], tweet['title'], tweet['id']))
-                        printf('DEBUG', "New title: '%s' for '%s'", tweet['title'], tweet['url'])
+                        printf('DEBUG', "New title: '%s' for '%s'", tweet['title'].encode('utf8'), tweet['url'].encode('utf8'))
                     else:
                         _titles_failed += 1
                         printf('INFO', "Non 200 response for '%s': %s", tweet['url'], response.status_code)
                 except Exception, exc:
                     _titles_failed += 1
-                    printf('WARN', "Error fetching '%s': %s", tweet['url'], exc)
+                    printf('WARN', "Error fetching '%s': %s", tweet['url'].encode('utf8'), exc)
             else:
                 _titles_existing += 1
-                printf('DEBUG', "Existing title '%s' for '%s'", tweet['title'], tweet['url'])
+                printf('DEBUG', "Existing title '%s' for '%s'", tweet['title'].encode('utf8'), tweet['url'].encode('utf8'))
         logging.debug("Processed %s tweets: %s new titles, %s existing titles, %s failed",
             len(self.filtered_tweets), _titles_new, _titles_existing, _titles_failed)
 
@@ -266,9 +266,7 @@ class FilteredTweets (object):
         return self.date_filtered_tweets
 
 def build_date(day_delta):
-    return (datetime.datetime.today() -
-            datetime.timedelta(days=day_delta)).replace(
-                hour=0, minute=0, second=0, microsecond=0)
+    return (datetime.datetime.today() - datetime.timedelta(days=day_delta)).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 class WebPage (object):
@@ -300,6 +298,7 @@ def main(accounts, params, close=0):
         remote_tweets = Tweets(account, params)
         remote_tweets.fetch()
         remote_tweets.save()
+
     tweets = FilteredTweets(params)
     wp = WebPage()
     wp.build(tweets.load_by_date(close, 1, params), params)
@@ -313,4 +312,8 @@ if __name__ == '__main__':
         close = -1 if 'today' == sys.argv[1] else 0
     except:
         pass
-    main(TWITTER_ACCOUNTS, CONFIG, close)
+
+    try:
+        main(TWITTER_ACCOUNTS, CONFIG, close)
+    except Exception, ex:
+        logging.exception('Failed to complete')
