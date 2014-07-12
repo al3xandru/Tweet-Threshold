@@ -177,25 +177,28 @@ class FilteredTweets (object):
         for tweet in self.filtered_tweets:
             if not tweet.get('title', None):
                 try:
-                    response = requests.get(tweet['url'])
+                    response = requests.head(tweet['url'], allow_redirects=True)
+                    _ctype = response.headers.get('content-type', '')
+                    tweet['url'] = response.url
+
                     if response.status_code == 200:
                         _titles_new += 1
-                        tweet['url'] = response.url
 
-                        _ctype = response.headers.get('content-type', '')
                         if _ctype.startswith('text'):
+                            response = requests.get(tweet['url'], allow_redirects=True)
                             tweet['title'] = self.get_title(response.text, tweet['url'], _ctype)
                         else:
-                            tweet['title'] = "%s (%s)" % (urlparse.urlsplit(response.url).netloc,
-                                                          self.get_contenttype(_ctype))
+                            tweet['title'] = self.get_title('', tweet['url'], _ctype)
 
                         self.db.update((tweet['url'], tweet['title'], tweet['id']))
                         printf('DEBUG', "New title: '%s' for '%s'", tweet['title'].encode('utf8'), tweet['url'].encode('utf8'))
                     else:
                         _titles_failed += 1
+                        tweet['title'] = self.get_title('', tweet['url'], _ctype)                        
                         printf('INFO', "Non 200 response for '%s': %s", tweet['url'], response.status_code)
                 except Exception, exc:
                     _titles_failed += 1
+                    tweet['title'] = self.get_title('', tweet['url'], '')
                     printf('WARN', "Error fetching '%s': %s", tweet['url'].encode('utf8'), exc)
             else:
                 _titles_existing += 1
@@ -203,25 +206,6 @@ class FilteredTweets (object):
         logging.debug("Processed %s tweets: %s new titles, %s existing titles, %s failed",
             len(self.filtered_tweets), _titles_new, _titles_existing, _titles_failed)
 
-    def get_contenttype(self, ctype):
-        if not(ctype):
-            return ''
-        bits = ctype.split('/')
-        if len(bits) == 1:
-            return ctype.lower()
-        else:
-            return bits[1].lower()
-
-
-    def get_title(self, html, url, ctype):
-        soup = BeautifulSoup(html)
-        title = soup.find('title')
-        if not title:
-            title = soup.find('h1')
-        if not title:
-            return "%s (%s)" % (urlparse.urlsplit(url).netloc, self.get_contenttype(ctype))
-        else:
-            return title.get_text().replace('\n', ' ').strip()
 
     def check_blacklist(self, text):
         for phrase in self.blacklist:
@@ -265,10 +249,36 @@ class FilteredTweets (object):
                 self.date_filtered_tweets.append(tweet)
         return self.date_filtered_tweets
 
-def build_date(day_delta):
-    return (datetime.datetime.today() - datetime.timedelta(days=day_delta)).replace(hour=0, minute=0, second=0, microsecond=0)
+    def get_contenttype(self, ctype):
+        if not(ctype):
+            return ''
+        bits = ctype.split('/')
+        if len(bits) == 1:
+            return ctype.lower()
+        else:
+            return bits[1].split(';')[0].lower()
 
 
+    def get_title(self, body, url, content_type):
+        ctype = self.get_contenttype(content_type)
+
+        if body.strip():
+            soup = BeautifulSoup(body)
+            title = soup.find('title')
+            if not title:
+                title = soup.find('h1')
+            if title:
+                return title.get_text().replace('\n', ' ').strip()
+            elif ctype:
+                return "%s (%s)" % (urlparse.urlsplit(url).netloc, self.get_contenttype(ctype))
+            else:
+                return urlparse.urlsplit(url).netloc
+        elif ctype:
+            return "%s (%s)" % (urlparse.urlsplit(url).netloc, self.get_contenttype(ctype))
+        else:
+            return urlparse.urlsplit(url).netloc
+
+                
 class WebPage (object):
 
     def build(self, yesterdays_items, params):
@@ -282,6 +292,8 @@ class WebPage (object):
 
         logging.info("Output page '%s' written", params['html_output'])
 
+def build_date(day_delta):
+    return (datetime.datetime.today() - datetime.timedelta(days=day_delta)).replace(hour=0, minute=0, second=0, microsecond=0)
 
 def printf(level, msg, *args):
     msg = "[%s] %s" % (level, msg)
